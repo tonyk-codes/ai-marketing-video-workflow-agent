@@ -17,17 +17,17 @@ LOCAL_CONFIG_PATH = BASE_DIR / "config.local.yml"
 
 DEFAULT_CONFIG = {
     "models": {
-        "slogan": "erichflam-hkust/Qwen2.5-VL-7B-Instruct-NIKE-Finetuned",
-        "slogan_endpoint": "https://atm0kc5pzw8g9pck.us-east-1.aws.endpoints.huggingface.cloud",
+        "slogan": "deepseek-ai/DeepSeek-V4.1-Flash",
         "script": "deepseek-ai/DeepSeek-V4.1-Flash",
-        "video": "fal-ai/sora-2/image-to-video/pro",
+        "video": "blackforestlabs/flux-3-max/image-to-video",
     },
     "generation": {
         "script_temperature": 0.65,
         "script_max_tokens": 4000,
         "video_duration": 8,
-        "video_resolution": "720p",
         "video_aspect_ratio": "16:9",
+        "video_generate_audio": True,
+        "video_reasoning_level": "high",
     },
     "credentials": {
         "HF_TOKEN": "",
@@ -61,9 +61,9 @@ def load_config() -> dict:
 CONFIG = load_config()
 
 SLOGAN_MODEL = CONFIG["models"]["slogan"]
-SLOGAN_ENDPOINT = CONFIG["models"]["slogan_endpoint"]
 SCRIPT_MODEL = CONFIG["models"]["script"]
 VIDEO_MODEL = CONFIG["models"]["video"]
+VIDEO_DURATION = int(CONFIG["generation"]["video_duration"])
 
 NATIONALITIES = ["Chinese", "American", "Indian", "Indonesian", "Pakistani", "Nigerian", "Brazilian", "Bangladeshi", "Russian", "Mexican"]
 NEGATIVE_DEFAULT = "blurry, low quality, artifacts, deformed, static, watermark, ugly, distorted, overexposed"
@@ -74,9 +74,9 @@ CATALOG = [
 ]
 
 try:
-    st.set_page_config(page_title="AI Personalized Marketing Nike Video Advertisement Agent", layout="wide", page_icon=str(ICON_PATH) if ICON_PATH.exists() else None)
+    st.set_page_config(page_title="AI Marketing Video Workflow Agent", layout="wide", page_icon=str(ICON_PATH) if ICON_PATH.exists() else None)
 except Exception:
-    st.set_page_config(page_title="AI Personalized Marketing Nike Video Advertisement Agent", layout="wide")
+    st.set_page_config(page_title="AI Marketing Video Workflow Agent", layout="wide")
 
 @dataclass(frozen=True)
 class Customer:
@@ -250,7 +250,7 @@ Output only the final slogan line that meets all rules above (no labels, no expl
     if image:
         slogan_messages[0]["content"].append({"type": "image_url", "image_url": {"url": image}})
     
-    raw_slogan = hf_chat_stream(SLOGAN_MODEL, slogan_messages, 80, base_url=SLOGAN_ENDPOINT)
+    raw_slogan = hf_chat_stream(SLOGAN_MODEL, slogan_messages, 80)
     
     # Ensure any stray whitespace or newlines are stripped only at the very end
     # Assuming clean_slogan() is your custom function that formats the name suffix
@@ -301,7 +301,7 @@ Designed for your relentless pace, {customer.name}, the {product.name} {product.
     if image:
         description_messages[0]["content"].append({"type": "image_url", "image_url": {"url": image}})
     
-    raw_description = hf_chat_stream(SLOGAN_MODEL, description_messages, 180, base_url=SLOGAN_ENDPOINT)
+    raw_description = hf_chat_stream(SLOGAN_MODEL, description_messages, 180)
     
     # Strip whitespace only on the final assembled string
     description = raw_description.strip()
@@ -317,7 +317,7 @@ def generate_cinematic_script(
 ) -> str:
     system_prompt = f"""
 You are a commercial film director, sports cinematographer, and expert image-to-video prompt engineer.
-Write one production-ready prompt for an 8-second premium sports advertisement. The video model will receive
+Write one production-ready prompt for a {VIDEO_DURATION}-second premium sports advertisement. The video model will receive
 the product image separately as its visual reference, so describe motion and cinematography precisely without
 inventing a different shoe. The output must be vivid, physically plausible, and directly executable.
 
@@ -327,7 +327,7 @@ Use exactly this structure and no introduction or closing commentary:
 [1.0-2.5s Hero Introduction]:
 [2.5-4.5s Performance Action]:
 [4.5-6.5s Hero Moment]:
-[6.5-8.0s Product End Frame]:
+[6.5-{VIDEO_DURATION}.0s Product End Frame]:
 [Camera and Lens]:
 [Lighting and Color]:
 [Environment and Sound]:
@@ -398,9 +398,10 @@ def generate_video(product_image_path: str | None, cinematic_script: str, slogan
         arguments={
             "image_url": image_url,
             "prompt": prompt,
-            "duration": int(CONFIG["generation"]["video_duration"]),
-            "resolution": CONFIG["generation"]["video_resolution"],
+            "duration": VIDEO_DURATION,
             "aspect_ratio": CONFIG["generation"]["video_aspect_ratio"],
+            "generate_audio": bool(CONFIG["generation"]["video_generate_audio"]),
+            "reasoning_level": CONFIG["generation"]["video_reasoning_level"],
         },
         with_logs=True,
     )

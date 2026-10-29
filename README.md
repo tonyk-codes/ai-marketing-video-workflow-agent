@@ -25,7 +25,7 @@ The app is intended for local use and does not require Streamlit Community Cloud
 
 `config.yml` is safe for general workflow settings. Keep private keys in environment variables or the ignored `config.local.yml` file. Environment variables take precedence over YAML credentials.
 
-The cinematic prompt is designed around the configured video duration and asks the script model for time-coded shots, camera language, lighting, sound design, product continuity, realistic movement, and an exact final slogan frame.
+The workflow uses DeepSeek V4.1 Flash for multimodal copy and cinematic direction, and FLUX 3 Max for image-to-video generation with native audio. The cinematic prompt is designed around the configured video duration and asks for time-coded shots, camera language, lighting, sound design, product continuity, realistic movement, and an exact final slogan frame.
 
 ## Requirements
 

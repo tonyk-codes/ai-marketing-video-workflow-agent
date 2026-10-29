@@ -1,17 +1,17 @@
 # Local workflow configuration.
 # Prefer environment variables or config.local.yml for private API keys.
 models:
-  slogan: erichflam-hkust/Qwen2.5-VL-7B-Instruct-NIKE-Finetuned
-  slogan_endpoint: https://atm0kc5pzw8g9pck.us-east-1.aws.endpoints.huggingface.cloud
+  slogan: deepseek-ai/DeepSeek-V4.1-Flash
   script: deepseek-ai/DeepSeek-V4.1-Flash
-  video: fal-ai/sora-2/image-to-video/pro
+  video: blackforestlabs/flux-3-max/image-to-video
 
 generation:
   script_temperature: 0.65
   script_max_tokens: 4000
   video_duration: 8
-  video_resolution: 720p
-  video_aspect_ratio: 16:9
+  video_aspect_ratio: "16:9"
+  video_generate_audio: true
+  video_reasoning_level: high
 
 credentials:
   HF_TOKEN: ''
