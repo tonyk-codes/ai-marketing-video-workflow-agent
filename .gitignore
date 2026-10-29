@@ -1,0 +1,29 @@
+# Python byte-compiled / optimised / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variable file (contains secrets)
+.env
+config.local.yml
+
+# pytest cache
+.pytest_cache/
+
+secrets.toml
+.streamlit/secrets.toml
+.streamlit/
+
+# Generated assets
+artifacts/
+outputs/

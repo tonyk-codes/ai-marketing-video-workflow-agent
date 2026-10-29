@@ -1,20 +1,73 @@
 import base64, os, re
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 import fal_client as fal, streamlit as st
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
+import yaml
 
 # App setup
 load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = BASE_DIR / "assets"
 ICON_PATH = ASSETS_DIR / "icon" / "nike_icon.png"
+CONFIG_PATH = BASE_DIR / "config.yml"
+LOCAL_CONFIG_PATH = BASE_DIR / "config.local.yml"
 
-SLOGAN_MODEL = "erichflam-hkust/Qwen2.5-VL-7B-Instruct-NIKE-Finetuned"
-SLOGAN_ENDPOINT = "https://atm0kc5pzw8g9pck.us-east-1.aws.endpoints.huggingface.cloud"
-SCRIPT_MODEL = "zai-org/GLM-4.7-Flash:novita"
-VIDEO_MODEL = "fal-ai/sora-2/image-to-video/pro"
+DEFAULT_CONFIG = {
+    "models": {
+        "slogan": "erichflam-hkust/Qwen2.5-VL-7B-Instruct-NIKE-Finetuned",
+        "slogan_fallback": "Qwen/Qwen2.5-7B-Instruct:together",
+        "slogan_endpoint": "https://atm0kc5pzw8g9pck.us-east-1.aws.endpoints.huggingface.cloud",
+        "script": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "script_fallback": "zai-org/GLM-4.7-Flash:novita",
+        "video": "fal-ai/sora-2/image-to-video/pro",
+    },
+    "generation": {
+        "script_temperature": 0.45,
+        "script_max_tokens": 4000,
+        "video_duration": 8,
+        "video_resolution": "720p",
+        "video_aspect_ratio": "16:9",
+    },
+    "credentials": {
+        "HF_TOKEN": "",
+        "FAL_KEY": "",
+    },
+}
+
+
+def merge_config(base: dict, override: dict) -> dict:
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            merge_config(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def load_config() -> dict:
+    config = merge_config({}, deepcopy(DEFAULT_CONFIG))
+    for path in (CONFIG_PATH, LOCAL_CONFIG_PATH):
+        if not path.exists():
+            continue
+        with path.open("r", encoding="utf-8") as file:
+            loaded = yaml.safe_load(file) or {}
+        if not isinstance(loaded, dict):
+            raise RuntimeError(f"Configuration file must contain a YAML mapping: {path.name}")
+        merge_config(config, loaded)
+    return config
+
+
+CONFIG = load_config()
+
+SLOGAN_MODEL = CONFIG["models"]["slogan"]
+SLOGAN_FALLBACK_MODEL = CONFIG["models"]["slogan_fallback"]
+SLOGAN_ENDPOINT = CONFIG["models"]["slogan_endpoint"]
+SCRIPT_MODEL = CONFIG["models"]["script"]
+SCRIPT_FALLBACK_MODEL = CONFIG["models"]["script_fallback"]
+VIDEO_MODEL = CONFIG["models"]["video"]
 
 NATIONALITIES = ["Chinese", "American", "Indian", "Indonesian", "Pakistani", "Nigerian", "Brazilian", "Bangladeshi", "Russian", "Mexican"]
 NEGATIVE_DEFAULT = "blurry, low quality, artifacts, deformed, static, watermark, ugly, distorted, overexposed"
@@ -44,7 +97,7 @@ def secret(name: str) -> str:
 
     try: value = st.secrets.get(name, "")
     except Exception: value = ""
-    return str(value or os.getenv(name, "")).strip()
+    return str(value or os.getenv(name, "") or CONFIG["credentials"].get(name, "")).strip()
 
 HF_TOKEN = secret("HF_TOKEN")
 FAL_KEY = secret("FAL_KEY")
@@ -110,11 +163,18 @@ def hf_chat_stream(model: str, messages: list[dict], max_tokens: int, *, base_ur
         raise RuntimeError(f"No text returned by {model}.")
     return result
 
-def hf_chat_once(model: str, messages: list[dict], max_tokens: int, *, base_url: str | None = None) -> str:
+def hf_chat_once(
+    model: str,
+    messages: list[dict],
+    max_tokens: int,
+    *,
+    base_url: str | None = None,
+    temperature: float = 0.7,
+) -> str:
     if not HF_TOKEN:
         raise RuntimeError("HF_TOKEN is missing.")
     client = InferenceClient(api_key=HF_TOKEN, base_url=base_url) if base_url else InferenceClient(api_key=HF_TOKEN)
-    result = client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens, temperature=0.7)
+    result = client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens, temperature=temperature)
     choices = getattr(result, "choices", None) or []
     if not choices: raise RuntimeError(f"No text returned by {model}.")
     text = extract_text(getattr(choices[0].message, "content", None))
@@ -199,7 +259,7 @@ Output only the final slogan line that meets all rules above (no labels, no expl
         raw_slogan = hf_chat_stream(SLOGAN_MODEL, slogan_messages, 80, base_url=SLOGAN_ENDPOINT)
     except Exception:
         slogan_messages_fallback = [{"role": "user", "content": slogan_prompt}]
-        raw_slogan = hf_chat_once("Qwen/Qwen2.5-7B-Instruct:together", slogan_messages_fallback, 80)
+        raw_slogan = hf_chat_once(SLOGAN_FALLBACK_MODEL, slogan_messages_fallback, 80)
     
     # Ensure any stray whitespace or newlines are stripped only at the very end
     # Assuming clean_slogan() is your custom function that formats the name suffix
@@ -270,35 +330,35 @@ def generate_cinematic_script(
     negative_prompt: str,
 ) -> str:
     system_prompt = f"""
-You are an elite image-to-video prompt engineer for premium sports ads.
-Write one complete, production-ready prompt for a video model. Finish every section cleanly.
+You are a commercial film director, sports cinematographer, and expert image-to-video prompt engineer.
+Write one production-ready prompt for an 8-second premium sports advertisement. The video model will receive
+the product image separately as its visual reference, so describe motion and cinematography precisely without
+inventing a different shoe. The output must be vivid, physically plausible, and directly executable.
 
-Use this exact structure and no other text:
-[Subject / Hero Shot]:
-[Scene & Environment]:
-[Motion & Dynamics]:
-[Camera & Cinematography]:
-[Lighting & Mood]:
-[Personalization Layer]:
-[End Frame & On-Screen Text]:
-[Style & Quality Boosters]:
+Use exactly this structure and no introduction or closing commentary:
+[Creative Direction]:
+[0.0-1.0s Opening Detail]:
+[1.0-2.5s Hero Introduction]:
+[2.5-4.5s Performance Action]:
+[4.5-6.5s Hero Moment]:
+[6.5-8.0s Product End Frame]:
+[Camera and Lens]:
+[Lighting and Color]:
+[Environment and Sound]:
+[On-Screen Text]:
+[Negative Constraints]:
 
-Requirements:
-- The product image will be provided separately to the video model as the visual reference.
-- The ad must prominently feature a realistic human hero who plausibly resembles the customer based on the available customer profile.
-- The person should appear in the majority of the video, with clear face visibility in hero shots, medium shots, and selected close-ups, while the {product.shoe_type} remains visually important throughout.
-- Keep the {product.shoe_type} in clear focus throughout, especially during motion, contact, and landing shots.
-- Build a coherent premium sports ad optimized for script-to-video generation.
-- Make camera direction precise, cinematic, and executable.
-- Use vivid but concise cinematic language.
-- Tailor the hero’s age cues, gender presentation, facial features, hair, skin tone, body type, wardrobe styling, movement energy, and overall vibe to a plausible interpretation of a {customer.age}-year-old {customer.gender} customer from {customer.nationality}, located in {customer.location}.
-- Reflect location and cultural styling subtly through environment, wardrobe, grooming, rhythm, and mood without becoming stereotypical.
-- Prioritize customer resemblance over generic athletic-model styling.
-- If a customer portrait or face reference is available to the video model, explicitly instruct it to closely match that facial identity; if no portrait is available, create a believable non-celebrity lookalike based only on profile attributes and do not imply exact identity.
-- Ensure the hero interacts naturally with the product so the shoe feels worn, lived in, and aspirational.
-- Include at least one strong hero moment where both the customer-like face and the {product.shoe_type} are visible in the same shot.
-- The final section must show this exact on-screen slogan at the end of the video: {slogan}
-- Do not mention the product model name.
+Creative requirements:
+- Build one continuous visual story with motivated cuts and clear time progression.
+- Feature a believable {customer.age}-year-old {customer.gender} hero from {customer.nationality} in {customer.location}; use respectful, subtle cultural and environmental cues rather than stereotypes.
+- Keep the hero in most shots, show a clear face at least once, and show the {product.shoe_type} clearly on-foot during movement, contact, and landing.
+- Preserve the same hero, wardrobe, shoe identity, proportions, lighting direction, and environment across every shot.
+- Specify shot size, camera movement, lens character, focus pull, shutter-like motion feel, and transitions where useful.
+- Use tactile details: foot strike, fabric movement, breath, surface texture, dust or rain only when motivated by the setting.
+- Make the action achievable in real physics. Avoid impossible body movement, floating feet, warped soles, extra limbs, or sudden wardrobe changes.
+- Create a strong visual crescendo, then leave enough stillness for the final product frame and slogan to read.
+- The final frame must display exactly this slogan and no other text: {slogan}
+- Do not mention the product model name or invent product specifications.
 - Avoid: {negative_prompt}
 """.strip()
 
@@ -309,7 +369,21 @@ Product description: {product_description}
 Generate the full script now.
 """.strip()
 
-    return hf_chat_once(SCRIPT_MODEL, [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], 4000)
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+    try:
+        return hf_chat_once(
+            SCRIPT_MODEL,
+            messages,
+            int(CONFIG["generation"]["script_max_tokens"]),
+            temperature=float(CONFIG["generation"]["script_temperature"]),
+        )
+    except Exception:
+        return hf_chat_once(
+            SCRIPT_FALLBACK_MODEL,
+            messages,
+            int(CONFIG["generation"]["script_max_tokens"]),
+            temperature=float(CONFIG["generation"]["script_temperature"]),
+        )
 
 def normalize_video_output(output) -> str | None:
     if output is None:
@@ -342,7 +416,17 @@ def generate_video(product_image_path: str | None, cinematic_script: str, slogan
         f'End the video with the exact on-screen slogan "{slogan}", presented elegantly in a stylish, cinematic composition.\n'
     )
 
-    result = fal.subscribe(VIDEO_MODEL, arguments={"image_url": image_url, "prompt": prompt, "duration": 8, "resolution": "720p", "aspect_ratio": "16:9"}, with_logs=True)
+    result = fal.subscribe(
+        VIDEO_MODEL,
+        arguments={
+            "image_url": image_url,
+            "prompt": prompt,
+            "duration": int(CONFIG["generation"]["video_duration"]),
+            "resolution": CONFIG["generation"]["video_resolution"],
+            "aspect_ratio": CONFIG["generation"]["video_aspect_ratio"],
+        },
+        with_logs=True,
+    )
     video = normalize_video_output(result)
     if not video:
         raise RuntimeError(f"No usable video source returned by {VIDEO_MODEL}.")
@@ -364,16 +448,14 @@ def app_style() -> None:
 
 def main() -> None:
     app_style()
-    st.markdown(
-        "### AI Personalized Marketing Nike Video Advertisement Agent\n"
-        "Generate tailored Nike campaign videos with a 3-step GenAI pipeline. Complete the customer profile and generation settings, then click “Generate Assets” to create your personalized ad creatives."
-    )
+    st.title("AI Marketing Video Workflow Agent")
+    st.caption("Create personalized campaign copy, a cinematic shot plan, and an image-to-video advertisement locally.")
 
     with st.sidebar:
         st.header("Customer Profile")
         name = st.text_input("Name", "Alex")
         age = st.number_input("Age", 18, 90, 25)
-        gender = st.selectbox("Gender", ["Male", "Female"])
+        gender = st.selectbox("Gender", ["Male", "Female", "Non-binary", "Prefer not to say"])
         nationality = st.selectbox("Nationality", NATIONALITIES, index=0)
         location = st.selectbox("Location", ["Hong Kong", "Los Angeles", "London"], index=0)
 
@@ -385,43 +467,55 @@ def main() -> None:
         product = PRODUCT_MAP[str(product_name)] if product_name else list(PRODUCT_MAP.values())[0]
         product_image = get_product_image(product)
         if product_image:
-            st.image(product_image, use_column_width=True)
+            st.image(product_image, use_container_width=True)
         else:
             st.info(f"No image found for {product.name}")
 
-        run = st.button("Generate Assets", type="primary", use_container_width=True)
+        st.caption(f"Script model: `{SCRIPT_MODEL}`")
+        run = st.button("Generate Campaign", type="primary", use_container_width=True)
 
     if not (run and name):
+        st.info("Complete the profile, choose a product, and start the campaign workflow from the sidebar.")
         return
 
     customer = Customer(str(name), int(age), str(gender), str(nationality), str(location))
     progress = st.progress(0, "Initiating pipeline...")
+    try:
+        with st.spinner("Writing personalized campaign copy..."):
+            slogan, description = generate_slogan_and_description(customer, product, negative_prompt, product_image)
+        progress.progress(25, "Stage 1 of 3 complete: campaign copy")
 
-    slogan, description = generate_slogan_and_description(
-        customer, product, negative_prompt, product_image
-    )
-    progress.progress(25, "Pipeline 1: Slogan & Product Description generated")
-    st.write("**Pipeline 1 (Slogan & Product Description):**")
-    st.caption(f"Model used: {SLOGAN_MODEL}")
-    st.success(f"**Slogan:** {slogan}\n\n**Description:** \n{description}")
+        with st.spinner("Directing the cinematic shot plan..."):
+            script = generate_cinematic_script(customer, product, description, slogan, negative_prompt)
+        progress.progress(50, "Stage 2 of 3 complete: cinematic script")
 
-    script = generate_cinematic_script(
-        customer, product, description, slogan, negative_prompt
-    )
-    progress.progress(50, "Pipeline 2: Cinematic script generated")
-    st.write("**Pipeline 2 (Cinematic Script Generation):**")
-    st.caption(f"Model used: {SCRIPT_MODEL}")
-    st.info(script)
+        with st.spinner("Rendering the image-to-video advertisement..."):
+            video = generate_video(product_image, script, slogan)
+        progress.progress(100, "Workflow complete")
+    except Exception as error:
+        progress.empty()
+        st.error(f"Workflow stopped: {error}")
+        st.caption("Check your configured API keys, model identifiers, product image, and provider availability.")
+        return
 
-    st.write("**Pipeline 3 (Video Generation with End-Screen Slogan):**")
-    st.caption(f"Model used: {VIDEO_MODEL}")
-    with st.spinner("Generating video..."):
-        video = generate_video(product_image, script, slogan)
-    progress.progress(100, "All pipelines completed")
-
-    if playable(video):
-        st.video(video)
-        st.success("Video generated successfully")
+    copy_tab, script_tab, video_tab = st.tabs(["Campaign Copy", "Cinematic Script", "Video"])
+    with copy_tab:
+        st.subheader(slogan)
+        st.write(description)
+        st.download_button("Download copy", f"{slogan}\n\n{description}\n", "campaign_copy.txt", "text/plain")
+        st.caption(f"Copy model: {SLOGAN_MODEL}")
+    with script_tab:
+        st.code(script, language="text")
+        st.download_button("Download script", script, "cinematic_script.txt", "text/plain")
+        st.caption(f"Script model: {SCRIPT_MODEL}")
+    with video_tab:
+        if playable(video):
+            st.video(video)
+            if video.startswith(("http://", "https://")):
+                st.link_button("Open video source", video)
+        else:
+            st.warning("The provider returned no playable video source.")
+        st.caption(f"Video model: {VIDEO_MODEL}")
 
 if __name__ == "__main__":
     main()
