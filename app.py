@@ -18,14 +18,12 @@ LOCAL_CONFIG_PATH = BASE_DIR / "config.local.yml"
 DEFAULT_CONFIG = {
     "models": {
         "slogan": "erichflam-hkust/Qwen2.5-VL-7B-Instruct-NIKE-Finetuned",
-        "slogan_fallback": "Qwen/Qwen2.5-7B-Instruct:together",
         "slogan_endpoint": "https://atm0kc5pzw8g9pck.us-east-1.aws.endpoints.huggingface.cloud",
         "script": "deepseek-ai/DeepSeek-V4.1-Flash",
-        "script_fallback": "zai-org/GLM-4.7-Flash:novita",
         "video": "fal-ai/sora-2/image-to-video/pro",
     },
     "generation": {
-        "script_temperature": 0.45,
+        "script_temperature": 0.65,
         "script_max_tokens": 4000,
         "video_duration": 8,
         "video_resolution": "720p",
@@ -63,10 +61,8 @@ def load_config() -> dict:
 CONFIG = load_config()
 
 SLOGAN_MODEL = CONFIG["models"]["slogan"]
-SLOGAN_FALLBACK_MODEL = CONFIG["models"]["slogan_fallback"]
 SLOGAN_ENDPOINT = CONFIG["models"]["slogan_endpoint"]
 SCRIPT_MODEL = CONFIG["models"]["script"]
-SCRIPT_FALLBACK_MODEL = CONFIG["models"]["script_fallback"]
 VIDEO_MODEL = CONFIG["models"]["video"]
 
 NATIONALITIES = ["Chinese", "American", "Indian", "Indonesian", "Pakistani", "Nigerian", "Brazilian", "Bangladeshi", "Russian", "Mexican"]
@@ -254,12 +250,7 @@ Output only the final slogan line that meets all rules above (no labels, no expl
     if image:
         slogan_messages[0]["content"].append({"type": "image_url", "image_url": {"url": image}})
     
-    # Generate the slogan text from the stream
-    try:
-        raw_slogan = hf_chat_stream(SLOGAN_MODEL, slogan_messages, 80, base_url=SLOGAN_ENDPOINT)
-    except Exception:
-        slogan_messages_fallback = [{"role": "user", "content": slogan_prompt}]
-        raw_slogan = hf_chat_once(SLOGAN_FALLBACK_MODEL, slogan_messages_fallback, 80)
+    raw_slogan = hf_chat_stream(SLOGAN_MODEL, slogan_messages, 80, base_url=SLOGAN_ENDPOINT)
     
     # Ensure any stray whitespace or newlines are stripped only at the very end
     # Assuming clean_slogan() is your custom function that formats the name suffix
@@ -310,12 +301,7 @@ Designed for your relentless pace, {customer.name}, the {product.name} {product.
     if image:
         description_messages[0]["content"].append({"type": "image_url", "image_url": {"url": image}})
     
-    # Generate the description text from the stream
-    try:
-        raw_description = hf_chat_stream(SLOGAN_MODEL, description_messages, 180, base_url=SLOGAN_ENDPOINT)
-    except Exception:
-        description_messages_fallback = [{"role": "user", "content": description_prompt}]
-        raw_description = hf_chat_once("Qwen/Qwen2.5-7B-Instruct:together", description_messages_fallback, 180)
+    raw_description = hf_chat_stream(SLOGAN_MODEL, description_messages, 180, base_url=SLOGAN_ENDPOINT)
     
     # Strip whitespace only on the final assembled string
     description = raw_description.strip()
@@ -369,21 +355,12 @@ Product description: {product_description}
 Generate the full script now.
 """.strip()
 
-    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-    try:
-        return hf_chat_once(
-            SCRIPT_MODEL,
-            messages,
-            int(CONFIG["generation"]["script_max_tokens"]),
-            temperature=float(CONFIG["generation"]["script_temperature"]),
-        )
-    except Exception:
-        return hf_chat_once(
-            SCRIPT_FALLBACK_MODEL,
-            messages,
-            int(CONFIG["generation"]["script_max_tokens"]),
-            temperature=float(CONFIG["generation"]["script_temperature"]),
-        )
+    return hf_chat_once(
+        SCRIPT_MODEL,
+        [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+        int(CONFIG["generation"]["script_max_tokens"]),
+        temperature=float(CONFIG["generation"]["script_temperature"]),
+    )
 
 def normalize_video_output(output) -> str | None:
     if output is None:
